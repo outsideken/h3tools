@@ -4,7 +4,7 @@
 ![Python](https://img.shields.io/badge/python-3.9%2B-blue)
 ![h3-py](https://img.shields.io/badge/h3--py-v3%20%7C%20v4-green)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Tests](https://img.shields.io/badge/tests-279%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-298%20passing-brightgreen)
 
 A Python library of utility functions for working with the [Uber H3](https://h3geo.org/docs) hierarchical hexagonal grid system.
 
@@ -134,9 +134,9 @@ coincident = ais_df.merge(ctd_df, on="h3_index")
 | `h3tools.core` | Cell validity, pentagon detection, resolution, area, edge length |
 | `h3tools.geo` | Point / Polygon / LineString ↔ H3; DMS, DDM, MGRS, (lat, lon) parsing; GeoJSON I/O |
 | `h3tools.analytics` | Hierarchy (parent/children/siblings), neighbours, paths, distance, hotspots, stats |
-| `h3tools.viz` | Matplotlib cell plotting, heatmaps, axis formatting |
+| `h3tools.viz` | Matplotlib cell plotting, heatmaps, axis formatting, choropleth |
 | `h3tools.temporal` | Solar/lunar events, timezone lookup, datetime helpers |
-| `h3tools.dataframe` | Pandas DataFrame integration |
+| `h3tools.dataframe` | Pandas DataFrame integration; H3 column, counts, stats, GeoDataFrame, time-series |
 
 ---
 
@@ -285,39 +285,59 @@ stats = h3_stats_df(counts)   # accepts Series directly
 print(stats[["total_events", "unique_cells", "mean", "p95"]])
 ```
 
-### GeoDataFrame — cells with counts
+### GeoDataFrame choropleth
 
-Convert a cell-count distribution directly to a GeoPandas GeoDataFrame and
-plot a choropleth in a single workflow.  The GeoDataFrame is compatible with
-QGIS, Folium, and any tool that accepts GeoPandas input.
+Convert a cell-count distribution to a GeoPandas GeoDataFrame and render a
+publication-ready choropleth in two lines.  The GeoDataFrame is also
+compatible with QGIS, Folium, and any tool that accepts GeoPandas input.
 
 ```python
 import matplotlib.pyplot as plt
-from collections import Counter
-from h3tools import add_h3_column, h3_count, h3_to_geodataframe
+from h3tools import add_h3_column, h3_count, plot_h3_choropleth
 
-# Build cell counts from a DataFrame of events
-df  = add_h3_column(df, geometry_col="geometry", resolution=9)
-counts = h3_count(df).to_dict()   # {cell: count, ...}
+df     = add_h3_column(df, geometry_col="geometry", resolution=9)
+counts = dict(h3_count(df))   # {cell: count, ...}
 
-# Convert to GeoDataFrame — one row per cell, with a 'count' column
-gdf = h3_to_geodataframe(counts.keys(), cell_counts=counts)
-
-# Choropleth — colour cells by event count
 fig, ax = plt.subplots(figsize=(10, 8))
-gdf.plot(
-    column="count",
-    cmap="YlOrRd",
-    legend=True,
-    legend_kwds={"label": "Event count"},
-    edgecolor="white",
-    linewidth=0.3,
-    ax=ax,
-)
-ax.set_title("Event density by H3 cell (resolution 9)")
-ax.set_axis_off()
+plot_h3_choropleth(ax, counts, title="Event density by H3 cell (resolution 9)")
 plt.tight_layout()
 plt.show()
+```
+
+Or build the GeoDataFrame directly for further processing:
+
+```python
+from h3tools import h3_to_geodataframe
+
+gdf = h3_to_geodataframe(counts.keys(), cell_counts=counts)
+# gdf has columns: h3_index, geometry (Polygon), count
+gdf.to_file("events.gpkg", driver="GPKG")   # export to GeoPackage
+```
+
+---
+
+### Time-series aggregation
+
+Aggregate event counts by H3 cell and time period for pattern-of-life
+analysis, trend detection, or animated choropleth workflows.
+
+```python
+import pandas as pd
+from h3tools import add_h3_column, h3_timeseries
+
+df = add_h3_column(df, geometry_col="geometry", resolution=9)
+
+# Daily event counts per cell — long format (h3_index, period, value)
+ts = h3_timeseries(df, freq="D")
+
+# Hourly — useful for AIS / CTD data
+ts_hourly = h3_timeseries(df, freq="h")
+
+# Aggregate a value column instead of counting rows
+ts_sum = h3_timeseries(df, value_col="signal_strength", agg="mean", freq="W")
+
+# Pivot to wide format — periods as rows, cells as columns
+wide = ts.pivot(index="period", columns="h3_index", values="value")
 ```
 
 ---
@@ -416,7 +436,7 @@ one-line description, organised by module. No internet connection required.
 
 ```bash
 pip install -e ".[dev]"
-pytest                  # 246 tests
+pytest                  # 298 tests
 ```
 
 ---
