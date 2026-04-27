@@ -4,7 +4,7 @@
 ![Python](https://img.shields.io/badge/python-3.9%2B-blue)
 ![h3-py](https://img.shields.io/badge/h3--py-v3%20%7C%20v4-green)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Tests](https://img.shields.io/badge/tests-246%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-279%20passing-brightgreen)
 
 A Python library of utility functions for working with the [Uber H3](https://h3geo.org/docs) hierarchical hexagonal grid system.
 
@@ -14,13 +14,28 @@ Fully compatible with both **h3-py v3.x** and **v4.x**, and designed to integrat
 
 ## Why h3tools?
 
-### The problem with points
+### The Problem with Points
 
-Most geospatial data arrives as points — a GPS coordinate, a device ping, a vessel position. Points tell you *where* something happened, but not *what kind of place* it happened in. Analysts end up eyeballing maps, mentally grouping clusters, and drawing conclusions that are difficult to quantify, reproduce, or share. The data stays as dots. The context stays in someone's head.
+Most geospatial data arrives as isolated dots on a map — a GPS ping, a device location, a vessel track, a crime incident, or a customer visit.
 
-### Locations, not coordinates
+A point tells you *where* something happened.
+But it tells you almost nothing about *why* it happened there.
 
-h3tools is built around a different approach. By assigning every point to an H3 cell, you convert a raw coordinate into a *location with properties* — a consistent, comparable geographic unit that can be counted, ranked, aggregated, and joined to other data. The H3 hexagonal grid is uniform and continuous, which makes comparisons across areas statistically fair in a way that administrative boundaries like counties, zip codes, or patrol zones are not. Once your data is on the grid, you are no longer asking "where is this point?" You are asking "what is happening at this location?" — and that is a question that scales.
+Analysts are left staring at clusters of dots, mentally grouping them, drawing subjective conclusions, and producing insights that are difficult to quantify, reproduce, or defend. The data remains visual noise while real analytic insight stays undiscovered — or trapped in an analyst's head.
+
+> ## Stop looking at dots.
+
+### From Coordinates to Locations
+
+**`h3tools`** was built to break this cycle.
+
+By assigning every point to an H3 hexagonal cell, raw coordinates are transformed into **consistent, comparable geographic units** — true *locations* that can be counted, ranked, aggregated, joined with other datasets, and analysed over time.
+
+Once a dataset lives on the grid, there is a fundamental shift in the questions an analyst can ask:
+
+> **"WHERE is this activity happening?"** becomes **"WHY is this activity happening at this location?"**
+
+This shift enables aggregated statistical analysis, long-term pattern-of-life studies, and advanced temporal analytics at scale.
 
 ```mermaid
 flowchart LR
@@ -38,11 +53,31 @@ flowchart LR
     style F fill:#e0f7fa,stroke:#00838f
 ```
 
-### Data discovery at scale
+### Why H3? A Deliberate Choice
+
+We evaluated the major geo-indexing systems — Administrative Boundaries, Square Grids, Geohash, S2, and H3 — and chose H3 because it offers the best balance for analytical work:
+
+- **Exceptional area uniformity** at each resolution — comparisons across cells are statistically fair
+- **Clean 6-neighbour topology** — reliable spatial relationships for ring, path, and clustering operations
+- **Strong hierarchical structure** — seamless multi-scale analysis through parent/child resolution stepping
+
+While no system is perfect — H3 has minor area distortion near the poles and 12 pentagonal cells per resolution — its strengths in analytical fairness and usability significantly outweigh these limitations compared to alternatives like S2 (which excels in search but is less suited for statistical and pattern-based work).
+
+### Data Discovery at Scale
 
 The most powerful consequence of a shared grid index is what it does to data discovery. When two independent datasets are both indexed to H3, finding spatially coincident activity becomes a cell lookup rather than a complex spatial join.
 
 Consider dark fleet fishing operations. AIS data — the automatic position broadcasts transmitted by commercial vessels — shows a vessel that has gone dark: it stopped broadcasting in a known fishing ground, a common tactic used to conceal illegal catch. Independently, Commercial Telecommunications Data (CTD) captures millions of mobile device pings across the same area and time window. Indexed to the same H3 grid, an analyst can identify which devices were present in the same cells where the vessel went dark — potentially surfacing crew, shore contacts, or support vessels — without writing a single spatial query. Stepping up to a parent cell broadens the search area to find correlated activity across a wider region. Stepping down to child cells isolates a specific anchorage or transfer point. The relationship between the datasets is not something the analyst has to go looking for. It surfaces through the grid.
+
+### What You Gain
+
+With **`h3tools`**, analysts and data scientists can:
+
+- Move from visual inspection to rigorous, reproducible spatial analysis
+- Discover hidden patterns and anomalies faster
+- Combine multiple datasets through simple cell-based joins
+- Track how behaviours evolve across space and time
+- Ask *why* questions instead of just *where* questions
 
 ---
 
@@ -246,8 +281,43 @@ df = add_h3_column(df, geometry_col="geometry", resolution=9)
 counts = h3_count(df)
 
 # Summary statistics as a single-row DataFrame
-stats = h3_stats_df(counts.to_dict())
+stats = h3_stats_df(counts)   # accepts Series directly
 print(stats[["total_events", "unique_cells", "mean", "p95"]])
+```
+
+### GeoDataFrame — cells with counts
+
+Convert a cell-count distribution directly to a GeoPandas GeoDataFrame and
+plot a choropleth in a single workflow.  The GeoDataFrame is compatible with
+QGIS, Folium, and any tool that accepts GeoPandas input.
+
+```python
+import matplotlib.pyplot as plt
+from collections import Counter
+from h3tools import add_h3_column, h3_count, h3_to_geodataframe
+
+# Build cell counts from a DataFrame of events
+df  = add_h3_column(df, geometry_col="geometry", resolution=9)
+counts = h3_count(df).to_dict()   # {cell: count, ...}
+
+# Convert to GeoDataFrame — one row per cell, with a 'count' column
+gdf = h3_to_geodataframe(counts.keys(), cell_counts=counts)
+
+# Choropleth — colour cells by event count
+fig, ax = plt.subplots(figsize=(10, 8))
+gdf.plot(
+    column="count",
+    cmap="YlOrRd",
+    legend=True,
+    legend_kwds={"label": "Event count"},
+    edgecolor="white",
+    linewidth=0.3,
+    ax=ax,
+)
+ax.set_title("Event density by H3 cell (resolution 9)")
+ax.set_axis_off()
+plt.tight_layout()
+plt.show()
 ```
 
 ---
