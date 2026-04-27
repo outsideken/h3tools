@@ -21,7 +21,7 @@ Most geospatial data arrives as isolated dots on a map — a GPS ping, a device 
 A point tells you *where* something happened.
 But it tells you almost nothing about *why* it happened there.
 
-Analysts are left staring at clusters of dots, mentally grouping them, drawing subjective conclusions, and producing insights that are difficult to quantify, reproduce, or defend. The data remains visual noise while real analytic insight stays undiscovered — or trapped in an analyst's head.
+Analysts are left staring at clusters of dots, mentally grouping them, drawing subjective conclusions, and producing insights that are difficult to quantify, reproduce, or defend. The data remains visual noise while real analytic insight stays trapped in an analyst's head, or worse, undiscovered.
 
 > ## Stop looking at dots.
 
