@@ -23,7 +23,7 @@ But it tells you almost nothing about *why* it happened there.
 
 Analysts are left staring at clusters of dots, mentally grouping them, drawing subjective conclusions, and producing insights that are difficult to quantify, reproduce, or defend. The data remains visual noise while real analytic insight stays trapped in an analyst's head, or worse, undiscovered.
 
-> ## Stop looking at dots.
+> ## Stop looking at the dots.
 
 ### From Coordinates to Locations
 
