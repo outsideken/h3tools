@@ -1,0 +1,81 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "h3tools"
+version = "0.1.0"
+description = "H3 geospatial helper library — v3/v4 compatible"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "KChadwick" }]
+requires-python = ">=3.9"
+
+keywords = ["h3", "geospatial", "hexagonal", "grid", "uber"]
+
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: GIS",
+    "Typing :: Typed",
+]
+
+dependencies = [
+    "h3>=3.7",
+    "shapely>=2.0",
+    "numpy>=1.24",
+    "pandas>=2.0",
+    "matplotlib>=3.7",
+    "mgrs>=1.4",
+    "astral>=3.2",
+    "timezonefinder>=8.2",
+    "python-dateutil>=2.8",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4",
+    "pytest-cov>=4.1",
+    "ruff>=0.1",
+    "mypy>=1.6",
+]
+lunar = [
+    "ephem>=4.1",
+]
+
+[project.urls]
+Repository  = "https://github.com/KChadwick/h3tools"
+"Bug Tracker" = "https://github.com/KChadwick/h3tools/issues"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["h3tools*"]
+
+[tool.setuptools.package-data]
+h3tools = ["py.typed"]
+
+# ── Ruff (linter) ─────────────────────────────────────────────────────────────
+[tool.ruff]
+line-length = 90
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP"]
+ignore = ["E501"]
+
+# ── Pytest ────────────────────────────────────────────────────────────────────
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts   = "-v --tb=short"
+
+# ── Mypy ──────────────────────────────────────────────────────────────────────
+[tool.mypy]
+python_version = "3.9"
+ignore_missing_imports = true
