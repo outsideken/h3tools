@@ -544,6 +544,17 @@ def point_to_tz_offset(pt: Point, eval_dt: datetime) -> tuple[str, float]:
     return tz_name, offset_hours
 
 
+# ── Astro helpers ─────────────────────────────────────────────────────────────
+
+def _astro_context(pt: Point, eval_dt: datetime):
+    """Return (eval_dt_utc, tz_name, tz_offset, local_tz, target_date) for astro calculations."""
+    eval_dt_utc = ensure_utc(eval_dt)
+    tz_name, tz_offset = point_to_tz_offset(pt, eval_dt_utc)
+    local_tz = ZoneInfo(tz_name)
+    target_date = eval_dt_utc.date()
+    return eval_dt_utc, tz_name, tz_offset, local_tz, target_date
+
+
 # ── Solar data ────────────────────────────────────────────────────────────────
 
 def get_solar_data(location: Point | str, eval_dt: datetime) -> dict:
@@ -635,11 +646,8 @@ def get_solar_data(location: Point | str, eval_dt: datetime) -> dict:
     pt = _resolve_location(location)
     _validate_datetime(eval_dt)
 
-    eval_dt_utc = ensure_utc(eval_dt)
-    tz_name, tz_offset = point_to_tz_offset(pt, eval_dt_utc)
-    local_tz = ZoneInfo(tz_name)
+    eval_dt_utc, tz_name, tz_offset, local_tz, target_date = _astro_context(pt, eval_dt)
     obs = Observer(latitude=pt.y, longitude=pt.x, elevation=0)
-    target_date = eval_dt_utc.date()
 
     def _safe_twilight(func, depression: float):
         """Return None if the sun never reaches the given depression angle."""
@@ -782,10 +790,7 @@ def get_lunar_data(location: Point | str, eval_dt: datetime) -> dict:
     pt = _resolve_location(location)
     _validate_datetime(eval_dt)
 
-    eval_dt_utc = ensure_utc(eval_dt)
-    tz_name, tz_offset = point_to_tz_offset(pt, eval_dt_utc)
-    local_tz = ZoneInfo(tz_name)
-    target_date = eval_dt_utc.date()
+    eval_dt_utc, tz_name, tz_offset, local_tz, target_date = _astro_context(pt, eval_dt)
 
     phase_day = _astral_moon_phase(target_date)
     illumination = (1.0 - math.cos(2.0 * math.pi * phase_day / _ASTRAL_LUNAR_SCALE)) / 2.0 * 100.0
