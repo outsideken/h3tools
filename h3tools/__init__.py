@@ -32,6 +32,8 @@ get_h3_cell_area(h3_index)
     Return the average area in km² for the cell's resolution.
 get_h3_cell_edge_length(h3_index)
     Return the average edge length in km for the cell's resolution.
+get_cluster_area_km2(hexagons)
+    Return the total area in km² of a cluster of H3 cells.
 
 ─────────────────────────────────────────────────────────────────────────────
 GEO  (h3tools.geo)  —  coordinate → H3
@@ -214,6 +216,7 @@ from h3tools.core import (
     get_h3_resolution,
     get_h3_cell_area,
     get_h3_cell_edge_length,
+    get_cluster_area_km2,
 )
 
 # ── Geo ───────────────────────────────────────────────────────────────────────
@@ -297,7 +300,7 @@ __all__ = [
     # core
     "is_h3_valid", "is_h3_pentagon",
     "get_h3_resolution", "get_h3_cell_area",
-    "get_h3_cell_edge_length",
+    "get_h3_cell_edge_length", "get_cluster_area_km2",
     # geo
     "point_to_h3", "latlon_to_h3", "latlon_to_point",
     "coordinate_to_h3", "coordinate_to_point",

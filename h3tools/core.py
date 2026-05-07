@@ -25,6 +25,8 @@ get_h3_cell_area
     Return the average area (km²) for the resolution of a cell.
 get_h3_cell_edge_length
     Return the average edge length (km) for the resolution of a cell.
+get_cluster_area_km2
+    Return the total area in km² of a cluster of H3 cells.
 """
 
 from __future__ import annotations
@@ -39,6 +41,7 @@ __all__ = [
     "get_h3_resolution",
     "get_h3_cell_area",
     "get_h3_cell_edge_length",
+    "get_cluster_area_km2",
 ]
 
 # ── Version detection ─────────────────────────────────────────────────────────
@@ -266,3 +269,73 @@ def get_h3_cell_edge_length(h3_index: str) -> float:
     if IS_H3_V4:
         return h3.average_hexagon_edge_length(res, unit="km")
     return h3.edge_length(res, unit="km")
+
+
+def get_cluster_area_km2(hexagons: list) -> float:
+    """
+    Return the total area in km² of a cluster of H3 cells.
+
+    Deduplicates the input list before summing, so duplicate indices do not
+    inflate the result.  Each cell's area is looked up individually via
+    :func:`get_h3_cell_area`, making the function correct for clusters
+    containing cells at mixed resolutions.
+
+    Parameters
+    ----------
+    hexagons : list of str
+        H3 cell index strings to include in the area calculation.
+        Duplicate entries are removed before summing.  All entries must be
+        valid H3 cell indices.
+
+    Returns
+    -------
+    float
+        Total area of the (deduplicated) cluster in square kilometres (km²).
+
+    Raises
+    ------
+    TypeError
+        If *hexagons* is not a ``list``.
+    ValueError
+        If *hexagons* is empty.
+        If any element is not a valid H3 cell index.
+
+    Notes
+    -----
+    :func:`get_h3_cell_area` returns the *average* area for a cell's
+    resolution level rather than the exact geometric area of the individual
+    cell.  For same-resolution clusters this is an excellent approximation;
+    variation across the globe is well under 1 % for most resolutions.  The
+    12 pentagon cells present at every resolution level are slightly smaller
+    than hexagons, which may introduce a small error if any pentagon is
+    included in the cluster.
+
+    See Also
+    --------
+    get_h3_cell_area : Per-cell area lookup used internally.
+    get_h3_cell_edge_length : Average edge length for a cell's resolution.
+
+    Examples
+    --------
+    >>> import h3
+    >>> cells = list(h3.grid_disk("89195da49b7ffff", 1))
+    >>> area = get_cluster_area_km2(cells)
+    >>> area > 0
+    True
+
+    >>> # Duplicates are ignored
+    >>> get_cluster_area_km2(["89195da49b7ffff", "89195da49b7ffff"]) == get_cluster_area_km2(["89195da49b7ffff"])
+    True
+    """
+    if not isinstance(hexagons, list):
+        raise TypeError(
+            f"hexagons must be a list, got {type(hexagons).__name__}."
+        )
+    if not hexagons:
+        raise ValueError("hexagons list cannot be empty.")
+
+    hexagons = sorted(set(hexagons))
+    for cell in hexagons:
+        _validate_h3_index(cell)
+
+    return sum(get_h3_cell_area(h) for h in hexagons)

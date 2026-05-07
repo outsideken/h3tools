@@ -48,6 +48,7 @@ from __future__ import annotations
 import math
 import warnings
 from datetime import datetime, timedelta, timezone
+from functools import lru_cache
 
 from dateutil import parser as dateutil_parser
 from shapely.geometry import Point
@@ -130,13 +131,13 @@ def _lunar_phase_name(phase_day: float) -> str:
 
 
 def _ephem_moon_riseset(
-    pt, target_date, local_tz
-) -> Tuple[datetime | None, datetime | None]:
+    pt, target_date, local_tz, elevation: float = 0.0
+) -> tuple[datetime | None, datetime | None]:
     """Return (moonrise, moonset) for *target_date* at *pt* using ephem."""
     obs = _ephem.Observer()
     obs.lat = str(pt.y)
     obs.lon = str(pt.x)
-    obs.elevation = 0
+    obs.elevation = elevation
     obs.horizon = "0"
     obs.pressure = 0  # suppress atmospheric refraction correction
 
@@ -161,7 +162,7 @@ def _ephem_moon_riseset(
 
 # ── Datetime helpers ──────────────────────────────────────────────────────────
 
-def convert_to_datetime(dt_input, ensure_utc: bool = False) -> datetime:
+def convert_to_datetime(dt_input, force_utc: bool = False) -> datetime:
     """
     Parse a date/time string or pass through a :class:`datetime` object.
 
@@ -172,7 +173,7 @@ def convert_to_datetime(dt_input, ensure_utc: bool = False) -> datetime:
         :func:`dateutil.parser.parse`, which accepts a wide range of
         formats including ISO 8601, RFC 2822, and many natural-language
         date strings.
-    ensure_utc : bool, optional
+    force_utc : bool, optional
         If ``True``, a *naive* datetime (one with no ``tzinfo``) is
         assumed to represent UTC and is made timezone-aware by attaching
         :data:`datetime.timezone.utc`.  Aware datetimes are returned
@@ -182,7 +183,7 @@ def convert_to_datetime(dt_input, ensure_utc: bool = False) -> datetime:
     -------
     datetime
         A :class:`datetime` object.  May be naive or aware depending on
-        the input and *ensure_utc*.
+        the input and *force_utc*.
 
     Raises
     ------
@@ -203,7 +204,7 @@ def convert_to_datetime(dt_input, ensure_utc: bool = False) -> datetime:
     >>> isinstance(dt, datetime)
     True
 
-    >>> dt_utc = convert_to_datetime("2026-04-24", ensure_utc=True)
+    >>> dt_utc = convert_to_datetime("2026-04-24", force_utc=True)
     >>> dt_utc.tzinfo is not None
     True
 
@@ -226,9 +227,8 @@ def convert_to_datetime(dt_input, ensure_utc: bool = False) -> datetime:
             "convert_to_datetime() accepts str or datetime only."
         )
 
-    if ensure_utc:
-        if is_dt_naive(dt):
-            dt = dt.replace(tzinfo=timezone.utc)
+    if force_utc and is_dt_naive(dt):
+        dt = dt.replace(tzinfo=timezone.utc)
 
     return dt
 
@@ -546,6 +546,19 @@ def point_to_tz_offset(pt: Point, eval_dt: datetime) -> tuple[str, float]:
 
 # ── Astro helpers ─────────────────────────────────────────────────────────────
 
+def _require_astro_deps() -> None:
+    """Raise ImportError if astral or timezonefinder are not installed."""
+    if not _ASTRAL_AVAILABLE:
+        raise ImportError(
+            "astral is required for solar/lunar calculations. "
+            "Install with: pip install astral"
+        )
+    if not _TZ_AVAILABLE:
+        raise ImportError(
+            "timezonefinder is required. Install with: pip install timezonefinder"
+        )
+
+
 def _astro_context(pt: Point, eval_dt: datetime):
     """Return (eval_dt_utc, tz_name, tz_offset, local_tz, target_date) for astro calculations."""
     eval_dt_utc = ensure_utc(eval_dt)
@@ -555,19 +568,34 @@ def _astro_context(pt: Point, eval_dt: datetime):
     return eval_dt_utc, tz_name, tz_offset, local_tz, target_date
 
 
+def _safe_twilight(func, obs, target_date, local_tz, depression: float):
+    """Return a localised twilight datetime, or None if the sun never crosses *depression*."""
+    try:
+        return func(obs, date=target_date, depression=depression).astimezone(local_tz)
+    except ValueError:
+        return None
+
+
 # ── Solar data ────────────────────────────────────────────────────────────────
 
-def get_solar_data(location: Point | str, eval_dt: datetime) -> dict:
+@lru_cache(maxsize=512)
+def get_solar_data(
+    location: Point | str,
+    eval_dt: datetime,
+    elevation: float = 0.0,
+    include_twilight: bool = True,
+) -> dict:
     """
     Compute solar events and twilight phases for a location on a given date.
 
     Identifies the local IANA timezone for *location*, then calculates
-    sunrise, sunset, and all three standard twilight phases (Civil, Nautical,
-    Astronomical) using the ``astral`` library.  All times in the returned
-    dictionary are localised to the geographic timezone of *location*.
+    sunrise, sunset, solar noon, day length, and all three standard twilight
+    phases (Civil, Nautical, Astronomical) using the ``astral`` library.  All
+    times in the returned dictionary are localised to the geographic timezone
+    of *location*.
 
-    At extreme latitudes the sun may not cross some depression angles
-    during polar day or polar night; those values are ``None``.
+    At extreme latitudes the sun may not cross some depression angles during
+    polar day or polar night; those values are ``None``.
 
     Parameters
     ----------
@@ -578,25 +606,45 @@ def get_solar_data(location: Point | str, eval_dt: datetime) -> dict:
     eval_dt : datetime
         Reference datetime.  Only the *date* component is used for solar
         calculations.  Naive datetimes are assumed to be UTC.
+    elevation : float, optional
+        Observer elevation above sea level in metres.  Affects sunrise/sunset
+        timing and twilight calculations.  Default ``0.0`` (sea level).
+    include_twilight : bool, optional
+        If ``False``, twilight phases are skipped and each phase key
+        (``'Civil'``, ``'Nautical'``, ``'Astronomical'``) is returned as
+        ``None``.  Useful when only sunrise/sunset/noon are needed.
+        Default ``True``.
 
     Returns
     -------
     dict
         A dictionary with the following keys:
 
-        ===========================  ========================================
-        Key                          Value
-        ===========================  ========================================
-        ``'Locality Point'``         :class:`shapely.geometry.Point`
-        ``'Evaluation Date'``        :class:`datetime.date`
-        ``'Timezone Name'``          str — IANA timezone name
-        ``'Timezone Offset (Hours)'``float — DST-adjusted UTC offset
-        ``'Sunrise'``                timezone-aware :class:`datetime`
-        ``'Sunset'``                 timezone-aware :class:`datetime`
-        ``'Civil'``                  dict with keys ``'Dawn'`` and ``'Dusk'``
-        ``'Nautical'``               dict with keys ``'Dawn'`` and ``'Dusk'``
-        ``'Astronomical'``           dict with keys ``'Dawn'`` and ``'Dusk'``
-        ===========================  ========================================
+        ================================  =====================================
+        Key                               Value
+        ================================  =====================================
+        ``'Locality Point'``              :class:`shapely.geometry.Point`
+        ``'Evaluation Date'``             :class:`datetime.date`
+        ``'Timezone Name'``               str — IANA timezone name
+        ``'Timezone Offset (Hours)'``     float — DST-adjusted UTC offset
+        ``'Elevation (m)'``               float — observer elevation
+        ``'Sunrise'``                     timezone-aware :class:`datetime`
+        ``'Sunset'``                      timezone-aware :class:`datetime`
+        ``'Solar Noon'``                  timezone-aware :class:`datetime`
+        ``'Day Length (Hours)'``          float — rounded to 3 decimal places
+        ``'Civil'``                       dict with ``'Dawn'``, ``'Dusk'``,
+                                          and ``'Depression'`` (6.0°), or
+                                          ``None`` if *include_twilight* is
+                                          ``False``
+        ``'Nautical'``                    dict with ``'Dawn'``, ``'Dusk'``,
+                                          and ``'Depression'`` (12.0°), or
+                                          ``None`` if *include_twilight* is
+                                          ``False``
+        ``'Astronomical'``                dict with ``'Dawn'``, ``'Dusk'``,
+                                          and ``'Depression'`` (18.0°), or
+                                          ``None`` if *include_twilight* is
+                                          ``False``
+        ================================  =====================================
 
         Dawn/dusk values are timezone-aware :class:`datetime` objects, or
         ``None`` when the sun does not reach the required depression angle
@@ -615,12 +663,20 @@ def get_solar_data(location: Point | str, eval_dt: datetime) -> dict:
 
     Notes
     -----
-    Elevation is fixed at 0 m (sea level) for the solar observer.
+    Results are cached up to 512 unique argument combinations via
+    :func:`functools.lru_cache`.  Do not mutate the returned dictionary;
+    doing so will corrupt subsequent cached lookups for the same arguments.
+
+    Custom depression angles (per-call overrides of ``ASTRAL_DEPRESSION_ANGLES``)
+    were considered for v0.1.1 and intentionally omitted.  A ``dict`` argument
+    is not hashable and would break caching; callers needing non-standard angles
+    should call :func:`astral.sun.dawn` / :func:`astral.sun.dusk` directly.
 
     See Also
     --------
     point_to_tz_offset : Return only the timezone name and UTC offset.
     get_lunar_data : Lunar phase and rise/set for the same location.
+    ASTRAL_DEPRESSION_ANGLES : Module-level depression angle definitions.
 
     Examples
     --------
@@ -632,57 +688,56 @@ def get_solar_data(location: Point | str, eval_dt: datetime) -> dict:
     >>> data = get_solar_data("871fb0962ffffff", datetime(2026, 4, 24))
     >>> isinstance(data["Sunrise"], datetime)
     True
+    >>> data["Day Length (Hours)"] > 0
+    True
     """
-    if not _ASTRAL_AVAILABLE:
-        raise ImportError(
-            "astral is required for solar calculations. "
-            "Install with: pip install astral"
-        )
-    if not _TZ_AVAILABLE:
-        raise ImportError(
-            "timezonefinder is required. Install with: pip install timezonefinder"
-        )
-
+    _require_astro_deps()
     pt = _resolve_location(location)
     _validate_datetime(eval_dt)
 
     eval_dt_utc, tz_name, tz_offset, local_tz, target_date = _astro_context(pt, eval_dt)
-    obs = Observer(latitude=pt.y, longitude=pt.x, elevation=0)
-
-    def _safe_twilight(func, depression: float):
-        """Return None if the sun never reaches the given depression angle."""
-        try:
-            return func(obs, date=target_date, depression=depression).astimezone(local_tz)
-        except ValueError:
-            return None
-
+    obs = Observer(latitude=pt.y, longitude=pt.x, elevation=elevation)
     s_raw = sun(obs, date=target_date)
 
+    day_length = round(
+        (s_raw["sunset"] - s_raw["sunrise"]).total_seconds() / 3600, 3
+    )
+
+    if include_twilight:
+        twilights = {
+            name: {
+                "Dawn":       _safe_twilight(dawn, obs, target_date, local_tz, angle),
+                "Dusk":       _safe_twilight(dusk, obs, target_date, local_tz, angle),
+                "Depression": angle,
+            }
+            for name, angle in ASTRAL_DEPRESSION_ANGLES.items()
+        }
+    else:
+        twilights = {name: None for name in ASTRAL_DEPRESSION_ANGLES}
+
     return {
-        "Locality Point": pt,
-        "Evaluation Date": target_date,
-        "Timezone Name": tz_name,
+        "Locality Point":          pt,
+        "Evaluation Date":         target_date,
+        "Timezone Name":           tz_name,
         "Timezone Offset (Hours)": tz_offset,
-        "Sunrise": s_raw["sunrise"].astimezone(local_tz),
-        "Sunset": s_raw["sunset"].astimezone(local_tz),
-        "Civil": {
-            "Dawn": _safe_twilight(dawn, ASTRAL_DEPRESSION_ANGLES["Civil"]),
-            "Dusk": _safe_twilight(dusk, ASTRAL_DEPRESSION_ANGLES["Civil"]),
-        },
-        "Nautical": {
-            "Dawn": _safe_twilight(dawn, ASTRAL_DEPRESSION_ANGLES["Nautical"]),
-            "Dusk": _safe_twilight(dusk, ASTRAL_DEPRESSION_ANGLES["Nautical"]),
-        },
-        "Astronomical": {
-            "Dawn": _safe_twilight(dawn, ASTRAL_DEPRESSION_ANGLES["Astronomical"]),
-            "Dusk": _safe_twilight(dusk, ASTRAL_DEPRESSION_ANGLES["Astronomical"]),
-        },
+        "Elevation (m)":           elevation,
+        "Sunrise":                 s_raw["sunrise"].astimezone(local_tz),
+        "Sunset":                  s_raw["sunset"].astimezone(local_tz),
+        "Solar Noon":              s_raw["noon"].astimezone(local_tz),
+        "Day Length (Hours)":      day_length,
+        **twilights,
     }
 
 
 # ── Lunar data ────────────────────────────────────────────────────────────────
 
-def get_lunar_data(location: Point | str, eval_dt: datetime) -> dict:
+@lru_cache(maxsize=512)
+def get_lunar_data(
+    location: Point | str,
+    eval_dt: datetime,
+    elevation: float = 0.0,
+    include_riseset: bool = True,
+) -> dict:
     """
     Return lunar phase, illumination, and rise/set times for a location.
 
@@ -700,34 +755,48 @@ def get_lunar_data(location: Point | str, eval_dt: datetime) -> dict:
     eval_dt : datetime
         Reference datetime.  Only the *date* component is used for lunar
         calculations.  Naive datetimes are assumed to be UTC.
+    elevation : float, optional
+        Observer elevation above sea level in metres.  Affects moonrise and
+        moonset timing when ``ephem`` is available.  Default ``0.0``.
+    include_riseset : bool, optional
+        If ``False``, moonrise/moonset computation is skipped regardless of
+        whether ``ephem`` is installed, and both keys are returned as
+        ``None``.  Useful when only phase and illumination are needed.
+        Default ``True``.
 
     Returns
     -------
     dict
         A dictionary with the following keys:
 
-        ==========================  ===========================================
-        Key                         Value
-        ==========================  ===========================================
-        ``'Locality Point'``        :class:`shapely.geometry.Point`
-        ``'Evaluation Date'``       :class:`datetime.date`
-        ``'Timezone Name'``         str — IANA timezone name
-        ``'Timezone Offset (Hours)'``float — DST-adjusted UTC offset
-        ``'Phase Number'``          float in [0, 27] — 0 = New Moon,
-                                    ~7 = First Quarter, ~14 = Full Moon,
-                                    ~21 = Last Quarter
-        ``'Phase Name'``            str — e.g. ``'Waxing Gibbous'``
-        ``'Illumination (%)'``      float — approximate disc illumination
-                                    percentage [0, 100]
-        ``'Moonrise'``              timezone-aware :class:`datetime`, or
-                                    ``None`` if ephem unavailable or moon
-                                    does not rise on *eval_dt*
-        ``'Moonset'``               timezone-aware :class:`datetime`, or
-                                    ``None`` if ephem unavailable or moon
-                                    does not set on *eval_dt*
-        ``'Ephem Available'``       bool — ``True`` when moonrise/moonset
-                                    were computed via ``ephem``
-        ==========================  ===========================================
+        ================================  =====================================
+        Key                               Value
+        ================================  =====================================
+        ``'Locality Point'``              :class:`shapely.geometry.Point`
+        ``'Evaluation Date'``             :class:`datetime.date`
+        ``'Timezone Name'``               str — IANA timezone name
+        ``'Timezone Offset (Hours)'``     float — DST-adjusted UTC offset
+        ``'Elevation (m)'``               float — observer elevation
+        ``'Phase Number'``                float in [0, 27] — 0 = New Moon,
+                                          ~7 = First Quarter, ~14 = Full Moon,
+                                          ~21 = Last Quarter
+        ``'Phase Name'``                  str — e.g. ``'Waxing Gibbous'``
+        ``'Moon Age (Days)'``             float — days since last New Moon
+                                          (rounded to 1 decimal place)
+        ``'Is Waxing'``                   bool — ``True`` while the moon
+                                          brightens toward Full Moon
+        ``'Illumination (%)'``            float — approximate disc
+                                          illumination percentage [0, 100]
+        ``'Moonrise'``                    timezone-aware :class:`datetime`,
+                                          or ``None`` if ephem unavailable,
+                                          *include_riseset* is ``False``, or
+                                          the moon does not rise on *eval_dt*
+        ``'Moonset'``                     timezone-aware :class:`datetime`,
+                                          or ``None`` (same conditions as
+                                          ``'Moonrise'``)
+        ``'Ephem Available'``             bool — ``True`` when ``ephem`` is
+                                          installed
+        ================================  =====================================
 
     Raises
     ------
@@ -745,12 +814,17 @@ def get_lunar_data(location: Point | str, eval_dt: datetime) -> dict:
     -----
     Phase number is taken from :func:`astral.moon.phase`, which returns a
     value on an internal [0, 27] scale rather than the true synodic period
-    (29.53 days).  Illumination is approximated as
+    (29.53 days).  ``'Moon Age (Days)'`` is the same value rounded to one
+    decimal place.  Illumination is approximated as
     ``(1 − cos(2π × phase / 27)) / 2 × 100 %``, which is exact at the
     four named phases and within ~3 % elsewhere.
 
     For moonrise and moonset at extreme latitudes (polar day/night), the
     moon may never rise or never set.  In those cases the value is ``None``.
+
+    Results are cached up to 512 unique argument combinations via
+    :func:`functools.lru_cache`.  Do not mutate the returned dictionary;
+    doing so will corrupt subsequent cached lookups for the same arguments.
 
     Install ``ephem`` to enable rise/set times::
 
@@ -774,40 +848,36 @@ def get_lunar_data(location: Point | str, eval_dt: datetime) -> dict:
     True
     >>> 0.0 <= data["Illumination (%)"] <= 100.0
     True
-    >>> isinstance(data["Phase Name"], str)
+    >>> isinstance(data["Is Waxing"], bool)
     True
     """
-    if not _ASTRAL_AVAILABLE:
-        raise ImportError(
-            "astral is required for lunar calculations. "
-            "Install with: pip install astral"
-        )
-    if not _TZ_AVAILABLE:
-        raise ImportError(
-            "timezonefinder is required. Install with: pip install timezonefinder"
-        )
-
+    _require_astro_deps()
     pt = _resolve_location(location)
     _validate_datetime(eval_dt)
 
     eval_dt_utc, tz_name, tz_offset, local_tz, target_date = _astro_context(pt, eval_dt)
 
     phase_day = _astral_moon_phase(target_date)
-    illumination = (1.0 - math.cos(2.0 * math.pi * phase_day / _ASTRAL_LUNAR_SCALE)) / 2.0 * 100.0
+    illumination = (
+        (1.0 - math.cos(2.0 * math.pi * phase_day / _ASTRAL_LUNAR_SCALE)) / 2.0 * 100.0
+    )
 
     moonrise = moonset = None
-    if _EPHEM_AVAILABLE:
-        moonrise, moonset = _ephem_moon_riseset(pt, target_date, local_tz)
+    if include_riseset and _EPHEM_AVAILABLE:
+        moonrise, moonset = _ephem_moon_riseset(pt, target_date, local_tz, elevation)
 
     return {
-        "Locality Point": pt,
-        "Evaluation Date": target_date,
-        "Timezone Name": tz_name,
+        "Locality Point":          pt,
+        "Evaluation Date":         target_date,
+        "Timezone Name":           tz_name,
         "Timezone Offset (Hours)": tz_offset,
-        "Phase Number": round(phase_day, 2),
-        "Phase Name": _lunar_phase_name(phase_day),
-        "Illumination (%)": round(illumination, 1),
-        "Moonrise": moonrise,
-        "Moonset": moonset,
-        "Ephem Available": _EPHEM_AVAILABLE,
+        "Elevation (m)":           elevation,
+        "Phase Number":            round(phase_day, 2),
+        "Phase Name":              _lunar_phase_name(phase_day),
+        "Moon Age (Days)":         round(phase_day, 1),
+        "Is Waxing":               phase_day < 13.5,
+        "Illumination (%)":        round(illumination, 1),
+        "Moonrise":                moonrise,
+        "Moonset":                 moonset,
+        "Ephem Available":         _EPHEM_AVAILABLE,
     }
