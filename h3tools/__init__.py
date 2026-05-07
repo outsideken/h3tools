@@ -96,6 +96,9 @@ cells_to_geojson(cells)
 geojson_to_cells(geojson, resolution)
     GeoJSON dict or JSON string (Polygon, MultiPolygon, Feature, or
     FeatureCollection) → set of H3 cell indices at the given resolution.
+geometry_to_box(geometry, as_polygon=False)
+    Convert a Shapely geometry to a PostGIS BOX string or its envelope Polygon.
+    Point geometries are rejected (degenerate zero-area bounding box).
 
 ─────────────────────────────────────────────────────────────────────────────
 ANALYTICS  (h3tools.analytics)  —  hierarchy & neighbours
@@ -245,6 +248,7 @@ from h3tools.geo import (
     points_to_h3_path,
     cells_to_geojson,
     geojson_to_cells,
+    geometry_to_box,
 )
 
 # ── Analytics ─────────────────────────────────────────────────────────────────
@@ -312,7 +316,7 @@ __all__ = [
     "h3_to_dms", "h3_to_ddm",
     "h3_to_mgrs", "dissolve_h3_cells",
     "points_to_h3_path",
-    "cells_to_geojson", "geojson_to_cells",
+    "cells_to_geojson", "geojson_to_cells", "geometry_to_box",
     # analytics
     "get_h3_parent", "get_h3_children", "get_h3_siblings",
     "get_h3_family", "get_h3_neighbors",

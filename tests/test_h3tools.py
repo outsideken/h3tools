@@ -578,6 +578,73 @@ class TestGeo:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# geometry_to_box
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestGeometryToBox:
+
+    POLY = Polygon([
+        (-0.14, 51.49), (-0.11, 51.49),
+        (-0.11, 51.52), (-0.14, 51.52),
+    ])
+
+    def test_default_returns_box_string(self):
+        from h3tools.geo import geometry_to_box
+        result = geometry_to_box(self.POLY)
+        assert isinstance(result, str) and result.startswith("BOX(")
+
+    def test_box_string_format(self):
+        from h3tools.geo import geometry_to_box
+        result = geometry_to_box(self.POLY)
+        assert result == f"BOX(-0.14 51.49,-0.11 51.52)"
+
+    def test_as_polygon_true_returns_polygon(self):
+        from h3tools.geo import geometry_to_box
+        result = geometry_to_box(self.POLY, as_polygon=True)
+        assert isinstance(result, Polygon)
+
+    def test_as_polygon_true_bounds_match(self):
+        from h3tools.geo import geometry_to_box
+        envelope = geometry_to_box(self.POLY, as_polygon=True)
+        assert envelope.bounds == pytest.approx(self.POLY.bounds)
+
+    def test_linestring_geometry(self):
+        from h3tools.geo import geometry_to_box
+        from shapely.geometry import LineString
+        ls = LineString([(-0.14, 51.49), (-0.11, 51.52)])
+        result = geometry_to_box(ls)
+        assert isinstance(result, str) and result.startswith("BOX(")
+
+    def test_multipolygon_geometry(self):
+        from h3tools.geo import geometry_to_box
+        from shapely.geometry import MultiPolygon
+        p1 = Polygon([(-0.14, 51.49), (-0.11, 51.49), (-0.11, 51.52), (-0.14, 51.52)])
+        p2 = Polygon([(2.78, 48.86), (2.80, 48.86), (2.80, 48.88), (2.78, 48.88)])
+        mp = MultiPolygon([p1, p2])
+        result = geometry_to_box(mp)
+        assert isinstance(result, str) and result.startswith("BOX(")
+
+    def test_point_geometry_raises(self):
+        from h3tools.geo import geometry_to_box
+        with pytest.raises(ValueError):
+            geometry_to_box(LONDON_PT)
+
+    def test_non_geometry_raises(self):
+        from h3tools.geo import geometry_to_box
+        with pytest.raises(TypeError):
+            geometry_to_box("POLYGON(...)")
+
+    def test_non_bool_as_polygon_raises(self):
+        from h3tools.geo import geometry_to_box
+        with pytest.raises(TypeError):
+            geometry_to_box(self.POLY, as_polygon=1)
+
+    def test_exported(self):
+        from h3tools import geometry_to_box
+        assert callable(geometry_to_box)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # analytics
 # ─────────────────────────────────────────────────────────────────────────────
 

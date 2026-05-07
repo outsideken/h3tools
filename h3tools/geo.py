@@ -94,6 +94,7 @@ __all__ = [
     "cells_to_geojson",
     "geojson_to_cells",
     "points_to_h3_path",
+    "geometry_to_box",
 ]
 
 import json
@@ -101,7 +102,8 @@ import re
 
 import h3
 import mgrs as mgrs_lib
-from shapely.geometry import LineString, MultiLineString, Point, Polygon, mapping
+from shapely.geometry import LineString, MultiLineString, MultiPolygon, Point, Polygon, mapping
+from shapely.geometry.base import BaseGeometry
 from shapely.ops import unary_union
 
 import shapely.geometry
@@ -1788,3 +1790,85 @@ def geojson_to_cells(geojson: dict | str, resolution: int) -> set[str]:
         f"Unsupported GeoJSON type {geo_type!r}. "
         "Expected Polygon, MultiPolygon, Feature, or FeatureCollection."
     )
+
+
+# ── Bounding box ──────────────────────────────────────────────────────────────
+
+def geometry_to_box(geometry: BaseGeometry, as_polygon: bool = False) -> str | Polygon:
+    """
+    Convert a Shapely geometry to its axis-aligned bounding box.
+
+    Computes the bounding box from *geometry* and returns it either as a
+    PostGIS ``BOX(...)`` string (default) or as a Shapely ``Polygon`` via
+    the geometry's :attr:`~shapely.geometry.base.BaseGeometry.envelope`
+    property.  ``Point`` geometries are rejected because a single point
+    has coincident bounds and cannot form a meaningful bounding box or
+    polygon.
+
+    Parameters
+    ----------
+    geometry : shapely.geometry.base.BaseGeometry
+        Any Shapely geometry except ``Point`` — e.g. ``LineString``,
+        ``Polygon``, ``MultiPolygon``, ``GeometryCollection``.
+    as_polygon : bool, optional
+        Controls the return type:
+
+        * ``False`` (default) — return a PostGIS BOX string of the form
+          ``"BOX(minx miny, maxx maxy)"``, suitable for storage or database
+          queries.
+        * ``True`` — return the bounding box as a Shapely ``Polygon``
+          using the geometry's :attr:`envelope` property, suitable for
+          spatial operations.
+
+    Returns
+    -------
+    str
+        PostGIS BOX string when *as_polygon* is ``False``.
+    shapely.geometry.Polygon
+        Axis-aligned rectangular polygon when *as_polygon* is ``True``.
+
+    Raises
+    ------
+    TypeError
+        If *geometry* is not a Shapely geometry object.
+        If *as_polygon* is not a ``bool``.
+    ValueError
+        If *geometry* is a ``Point`` (degenerate zero-area bounding box).
+
+    See Also
+    --------
+    dissolve_h3_cells : Merge H3 cells into a single geometry.
+    h3_to_polygon : Convert an H3 cell to its boundary polygon.
+
+    Examples
+    --------
+    >>> from shapely.geometry import Polygon
+    >>> poly = Polygon([(-0.14, 51.49), (-0.11, 51.49), (-0.11, 51.52), (-0.14, 51.52)])
+    >>> geometry_to_box(poly)
+    'BOX(-0.14 51.49,-0.11 51.52)'
+
+    >>> envelope = geometry_to_box(poly, as_polygon=True)
+    >>> isinstance(envelope, Polygon)
+    True
+    >>> envelope.bounds == poly.bounds
+    True
+    """
+    if not isinstance(geometry, BaseGeometry):
+        raise TypeError(
+            f"geometry_to_box() expected a Shapely geometry, got {type(geometry).__name__}."
+        )
+    if isinstance(geometry, Point):
+        raise ValueError(
+            "geometry_to_box() does not accept Point geometries — a single point "
+            "has coincident bounds and cannot form a meaningful bounding box."
+        )
+    if not isinstance(as_polygon, bool):
+        raise TypeError(
+            f"geometry_to_box() as_polygon must be a bool, got {type(as_polygon).__name__}."
+        )
+
+    if as_polygon:
+        return geometry.envelope
+
+    minx, miny, maxx, maxy = geometry.bounds
+    return f"BOX({minx} {miny},{maxx} {maxy})"
