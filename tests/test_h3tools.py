@@ -219,6 +219,48 @@ class TestCore:
         from h3tools import is_h3_pentagon
         assert callable(is_h3_pentagon)
 
+    # ── get_cluster_area_km2 ──────────────────────────────────────────────────
+
+    def test_get_cluster_area_km2_positive(self):
+        from h3tools.core import get_cluster_area_km2
+        import h3
+        cells = list(h3.grid_disk(CELL_9, 1))
+        assert get_cluster_area_km2(cells) > 0
+
+    def test_get_cluster_area_km2_single_cell(self):
+        from h3tools.core import get_cluster_area_km2, get_h3_cell_area
+        assert get_cluster_area_km2([CELL_9]) == pytest.approx(get_h3_cell_area(CELL_9))
+
+    def test_get_cluster_area_km2_deduplicates(self):
+        from h3tools.core import get_cluster_area_km2
+        assert get_cluster_area_km2([CELL_9, CELL_9]) == get_cluster_area_km2([CELL_9])
+
+    def test_get_cluster_area_km2_scales_with_size(self):
+        from h3tools.core import get_cluster_area_km2
+        import h3
+        disk1 = list(h3.grid_disk(CELL_9, 1))
+        disk2 = list(h3.grid_disk(CELL_9, 2))
+        assert get_cluster_area_km2(disk2) > get_cluster_area_km2(disk1)
+
+    def test_get_cluster_area_km2_empty_raises(self):
+        from h3tools.core import get_cluster_area_km2
+        with pytest.raises(ValueError):
+            get_cluster_area_km2([])
+
+    def test_get_cluster_area_km2_non_list_raises(self):
+        from h3tools.core import get_cluster_area_km2
+        with pytest.raises(TypeError):
+            get_cluster_area_km2({CELL_9})
+
+    def test_get_cluster_area_km2_invalid_cell_raises(self):
+        from h3tools.core import get_cluster_area_km2
+        with pytest.raises(ValueError):
+            get_cluster_area_km2(["not_a_cell"])
+
+    def test_get_cluster_area_km2_exported(self):
+        from h3tools import get_cluster_area_km2
+        assert callable(get_cluster_area_km2)
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # geo
@@ -1003,6 +1045,11 @@ class TestTemporal:
         original = datetime(2026, 4, 24)
         assert convert_to_datetime(original) is original
 
+    def test_convert_to_datetime_force_utc_attaches_tzinfo(self):
+        from h3tools.temporal import convert_to_datetime
+        dt = convert_to_datetime("2026-04-24", force_utc=True)
+        assert dt.tzinfo is not None
+
     def test_convert_to_datetime_invalid_raises(self):
         from h3tools.temporal import convert_to_datetime
         with pytest.raises(ValueError):
@@ -1041,7 +1088,8 @@ class TestTemporal:
     def test_get_solar_data_keys(self):
         from h3tools.temporal import get_solar_data
         data = get_solar_data(LONDON_PT, datetime(2026, 4, 24))
-        for key in ("Sunrise", "Sunset", "Civil", "Nautical", "Astronomical"):
+        for key in ("Sunrise", "Sunset", "Solar Noon", "Day Length (Hours)",
+                    "Elevation (m)", "Civil", "Nautical", "Astronomical"):
             assert key in data
         assert isinstance(data["Sunrise"], datetime)
 
@@ -1049,12 +1097,41 @@ class TestTemporal:
         from h3tools.temporal import get_solar_data
         data = get_solar_data(LONDON_PT, datetime(2026, 4, 24))
         for phase in ("Civil", "Nautical", "Astronomical"):
-            assert "Dawn" in data[phase] and "Dusk" in data[phase]
+            assert "Dawn" in data[phase]
+            assert "Dusk" in data[phase]
+            assert "Depression" in data[phase]
+            assert isinstance(data[phase]["Depression"], float)
 
     def test_get_solar_data_sunrise_before_sunset(self):
         from h3tools.temporal import get_solar_data
         data = get_solar_data(LONDON_PT, datetime(2026, 4, 24))
         assert data["Sunrise"] < data["Sunset"]
+
+    def test_get_solar_data_solar_noon_between_sunrise_sunset(self):
+        from h3tools.temporal import get_solar_data
+        data = get_solar_data(LONDON_PT, datetime(2026, 4, 24))
+        assert data["Sunrise"] < data["Solar Noon"] < data["Sunset"]
+
+    def test_get_solar_data_day_length_positive(self):
+        from h3tools.temporal import get_solar_data
+        data = get_solar_data(LONDON_PT, datetime(2026, 4, 24))
+        assert data["Day Length (Hours)"] > 0
+
+    def test_get_solar_data_elevation_default_zero(self):
+        from h3tools.temporal import get_solar_data
+        data = get_solar_data(LONDON_PT, datetime(2026, 4, 24))
+        assert data["Elevation (m)"] == 0.0
+
+    def test_get_solar_data_elevation_param(self):
+        from h3tools.temporal import get_solar_data
+        data = get_solar_data(LONDON_PT, datetime(2026, 4, 24), elevation=100.0)
+        assert data["Elevation (m)"] == 100.0
+
+    def test_get_solar_data_include_twilight_false(self):
+        from h3tools.temporal import get_solar_data
+        data = get_solar_data(LONDON_PT, datetime(2026, 4, 24), include_twilight=False)
+        for phase in ("Civil", "Nautical", "Astronomical"):
+            assert data[phase] is None
 
     def test_get_solar_data_accepts_h3_index(self):
         from h3tools.temporal import get_solar_data
@@ -1093,14 +1170,25 @@ class TestTemporal:
     def test_get_lunar_data_keys_present(self):
         from h3tools.temporal import get_lunar_data
         data = get_lunar_data(LONDON_PT, datetime(2026, 4, 24))
-        for key in ("Phase Number", "Phase Name", "Illumination (%)",
-                    "Moonrise", "Moonset", "Ephem Available"):
+        for key in ("Phase Number", "Phase Name", "Moon Age (Days)", "Is Waxing",
+                    "Illumination (%)", "Elevation (m)", "Moonrise", "Moonset",
+                    "Ephem Available"):
             assert key in data
 
     def test_get_lunar_data_phase_in_range(self):
         from h3tools.temporal import get_lunar_data
         data = get_lunar_data(LONDON_PT, datetime(2026, 4, 24))
         assert 0.0 <= data["Phase Number"] <= 27.0
+
+    def test_get_lunar_data_moon_age_in_range(self):
+        from h3tools.temporal import get_lunar_data
+        data = get_lunar_data(LONDON_PT, datetime(2026, 4, 24))
+        assert 0.0 <= data["Moon Age (Days)"] <= 27.0
+
+    def test_get_lunar_data_is_waxing_is_bool(self):
+        from h3tools.temporal import get_lunar_data
+        data = get_lunar_data(LONDON_PT, datetime(2026, 4, 24))
+        assert isinstance(data["Is Waxing"], bool)
 
     def test_get_lunar_data_illumination_in_range(self):
         from h3tools.temporal import get_lunar_data
@@ -1111,6 +1199,22 @@ class TestTemporal:
         from h3tools.temporal import get_lunar_data
         data = get_lunar_data(LONDON_PT, datetime(2026, 4, 24))
         assert isinstance(data["Phase Name"], str) and len(data["Phase Name"]) > 0
+
+    def test_get_lunar_data_elevation_default_zero(self):
+        from h3tools.temporal import get_lunar_data
+        data = get_lunar_data(LONDON_PT, datetime(2026, 4, 24))
+        assert data["Elevation (m)"] == 0.0
+
+    def test_get_lunar_data_elevation_param(self):
+        from h3tools.temporal import get_lunar_data
+        data = get_lunar_data(LONDON_PT, datetime(2026, 4, 24), elevation=50.0)
+        assert data["Elevation (m)"] == 50.0
+
+    def test_get_lunar_data_include_riseset_false(self):
+        from h3tools.temporal import get_lunar_data
+        data = get_lunar_data(LONDON_PT, datetime(2026, 4, 24), include_riseset=False)
+        assert data["Moonrise"] is None
+        assert data["Moonset"] is None
 
     def test_get_lunar_data_accepts_h3_index(self):
         from h3tools.temporal import get_lunar_data
