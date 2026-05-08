@@ -53,15 +53,48 @@ flowchart LR
     style F fill:#e0f7fa,stroke:#00838f
 ```
 
+### The Technical Case for Geospatial Indexing
+
+Converting coordinates to cell indices is not a cosmetic change — it fundamentally transforms the class of problem you are solving.
+
+**Spatial queries become lookups.**
+A traditional point-in-polygon check requires floating-point intersection tests against every vertex of every polygon. At scale — a million points against a thousand polygons — that is an O(n²) problem. Geospatial indexing converts a coordinate to a single integer or string at ingest. After that, "are these two points in the same area?" is a string comparison. Spatial joins become primary key lookups: **O(1)**.
+
+**Aggregation is free.**
+H3 cells are hierarchical — every cell has exactly one parent at the next coarser resolution and seven children at the next finer one. Aggregating from city block to neighbourhood to city does not require re-running a spatial join. It is a bit-shift on the cell ID. Query the data once at the finest resolution you need; every coarser resolution is already embedded in the index.
+
+**Coordinates belong to exactly one cell.**
+Traditional methods suffer from floating-point boundary effects: a point sitting on the edge between two polygons may fail to register in either, or flicker between them depending on rounding. Discrete global grids eliminate this — a coordinate maps to exactly one cell at a given resolution, deterministically, every time. Joins across datasets indexed independently are reliable.
+
+**Every H3 neighbour is equidistant.**
+Square grids have two kinds of neighbours: edge-adjacent (closer) and corner-adjacent (further). This directional bias distorts any analysis that relies on spatial proximity — radial expansion, movement modelling, diffusion. In a hexagonal grid, all six neighbours share an edge and sit at the same distance from the centre. There is no bias to correct for.
+
+**Complex geometries become set operations.**
+Checking whether a point falls inside a jagged coastline with ten thousand vertices is an expensive computation run once per point. Index the coastline as a set of H3 cells and the same check becomes a set membership test — **O(1)** per point, regardless of polygon complexity.
+
+| | Traditional (R-Tree / Geometry) | H3 Geospatial Index |
+|---|---|---|
+| Data type | Floating-point coordinates | Integer / string cell IDs |
+| Spatial join | O(n log n) – O(n²) | O(1) lookup |
+| Aggregation | Re-run spatial join at each scale | Bit-shift on the cell ID |
+| Boundary handling | Floating-point edge cases | Deterministic — one cell per coordinate |
+| Neighbour uniformity | Biased (edge ≠ corner distance) | Uniform — all six neighbours equidistant |
+| Polygon query | Point-in-polygon per vertex | Set membership test |
+| Best fit | Precision mapping · CAD · engineering | Big data · analytics · ML · logistics |
+
+---
+
 ### Why H3? A Deliberate Choice
 
-We evaluated the major geo-indexing systems — Administrative Boundaries, Square Grids, Geohash, S2, and H3 — and chose H3 because it offers the best balance for analytical work:
+The table above describes geospatial indexing in general. The choice of H3 specifically comes down to what matters most for analytical work.
 
-- **Exceptional area uniformity** at each resolution — comparisons across cells are statistically fair
-- **Clean 6-neighbour topology** — reliable spatial relationships for ring, path, and clustering operations
-- **Strong hierarchical structure** — seamless multi-scale analysis through parent/child resolution stepping
+We evaluated the major systems — Administrative Boundaries, Square Grids, Geohash, S2, and H3 — and H3 is the only one that delivers all three of these properties together:
 
-While no system is perfect — H3 has minor area distortion near the poles and 12 pentagonal cells per resolution — its strengths in analytical fairness and usability significantly outweigh these limitations compared to alternatives like S2 (which excels in search but is less suited for statistical and pattern-based work).
+- **Exceptional area uniformity** — cells at the same resolution are nearly identical in size, so comparing event counts across cells is statistically fair. Geohash cells vary significantly in area depending on latitude.
+- **True hexagonal topology** — the equidistant-neighbour property described above. Square grids and Geohash do not have it; S2 uses quad-trees that share the same corner-bias problem as squares.
+- **Clean hierarchical nesting** — each cell has exactly 7 children at the next finer resolution, enabling consistent multi-scale analysis. Administrative boundaries are irregular and change over time.
+
+H3 is not without trade-offs — there is minor area distortion near the poles, and 12 pentagonal cells exist per resolution that require special handling in path operations. `h3tools` manages both transparently.
 
 ### Data Discovery at Scale
 
