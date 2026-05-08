@@ -486,11 +486,16 @@ print(tz_name, utc_offset)                      # Europe/London  1.0
 
 ```python
 import h3tools
+
+# Concise function catalogue — name and one-line description, grouped by module
+h3tools.list_functions()
+
+# Full quick-reference — signatures, parameters, and descriptions
 help(h3tools)
 ```
 
-Prints a full quick-reference of every public function with signature and
-one-line description, organised by module. No internet connection required.
+Both work offline. `list_functions()` is the faster way to find what you need;
+`help()` gives the full parameter documentation for every function.
 
 ---
 
