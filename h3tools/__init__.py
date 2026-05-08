@@ -19,6 +19,10 @@ Quick start
 >>> solar["Timezone Name"]
 'Europe/London'
 
+list_functions()
+    Print a catalogue of all public h3tools functions grouped by module,
+    with the first line of each function's docstring.
+
 ─────────────────────────────────────────────────────────────────────────────
 CORE  (h3tools.core)
 ─────────────────────────────────────────────────────────────────────────────
@@ -300,6 +304,38 @@ from h3tools.dataframe import (
     h3_timeseries,
 )
 
+def list_functions() -> None:
+    """Print a catalogue of all public h3tools functions grouped by module."""
+    import inspect
+    from h3tools import core, geo, analytics, viz, temporal, dataframe
+
+    sections = [
+        ("core",      core),
+        ("geo",       geo),
+        ("analytics", analytics),
+        ("viz",       viz),
+        ("temporal",  temporal),
+        ("dataframe", dataframe),
+    ]
+
+    for section_name, module in sections:
+        names = getattr(module, "__all__", [])
+        funcs = [
+            (name, getattr(module, name))
+            for name in names
+            if inspect.isfunction(getattr(module, name, None))
+        ]
+        if not funcs:
+            continue
+        print(f"\n{'─' * 60}")
+        print(f"  {section_name}")
+        print(f"{'─' * 60}")
+        for name, obj in funcs:
+            doc = inspect.getdoc(obj) or ""
+            summary = doc.split("\n")[0]
+            print(f"  {name:<40} {summary}")
+
+
 __all__ = [
     # core
     "is_h3_valid", "is_h3_pentagon",
@@ -334,4 +370,6 @@ __all__ = [
     # dataframe
     "add_h3_column", "h3_count", "h3_stats_df", "h3_to_geodataframe",
     "h3_timeseries",
+    # discovery
+    "list_functions",
 ]

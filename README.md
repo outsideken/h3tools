@@ -4,7 +4,7 @@
 ![Python](https://img.shields.io/badge/python-3.9%2B-blue)
 ![h3-py](https://img.shields.io/badge/h3--py-v3%20%7C%20v4-green)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Tests](https://img.shields.io/badge/tests-298%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-327%20passing-brightgreen)
 
 A Python library of utility functions for working with the [Uber H3](https://h3geo.org/docs) hierarchical hexagonal grid system.
 
@@ -131,8 +131,8 @@ coincident = ais_df.merge(ctd_df, on="h3_index")
 
 | Module | Contents |
 |---|---|
-| `h3tools.core` | Cell validity, pentagon detection, resolution, area, edge length |
-| `h3tools.geo` | Point / Polygon / LineString ↔ H3; DMS, DDM, MGRS, (lat, lon) parsing; GeoJSON I/O |
+| `h3tools.core` | Cell validity, pentagon detection, resolution, area, edge length, cluster area |
+| `h3tools.geo` | Point / Polygon / LineString ↔ H3; DMS, DDM, MGRS, (lat, lon) parsing; GeoJSON I/O; bounding box |
 | `h3tools.analytics` | Hierarchy (parent/children/siblings), neighbours, paths, distance, hotspots, stats |
 | `h3tools.viz` | Matplotlib cell plotting, heatmaps, axis formatting, choropleth |
 | `h3tools.temporal` | Solar/lunar events, timezone lookup, datetime helpers |
@@ -264,6 +264,28 @@ print(json.dumps(geojson, indent=2))
 
 # GeoJSON → cells (accepts dict or JSON string)
 recovered = geojson_to_cells(geojson, resolution=10)
+```
+
+### Bounding box
+
+Convert any Shapely geometry (Polygon, MultiPolygon, LineString, …) to a
+PostGIS-compatible `BOX` string, or get the envelope as a Shapely Polygon.
+Point geometries are rejected — a single point has coincident bounds and
+cannot form a meaningful bounding box.
+
+```python
+from shapely.geometry import Polygon
+from h3tools import geometry_to_box
+
+poly = Polygon([(-0.14, 51.49), (-0.11, 51.49),
+                (-0.11, 51.52), (-0.14, 51.52)])
+
+# PostGIS BOX string (default)
+box_str = geometry_to_box(poly)
+print(box_str)   # BOX(-0.14 51.49,-0.11 51.52)
+
+# Shapely Polygon envelope
+envelope = geometry_to_box(poly, as_polygon=True)
 ```
 
 ---
@@ -409,12 +431,19 @@ date = datetime(2026, 4, 24)
 solar = get_solar_data(pt, date)
 print(solar['Sunrise'].strftime('%H:%M %Z'))    # 05:51 BST
 print(solar['Sunset'].strftime('%H:%M %Z'))     # 20:18 BST
+print(solar['Solar Noon'].strftime('%H:%M %Z')) # 13:04 BST
+print(f"{solar['Day Length (Hours)']:.2f} hrs") # 14.45 hrs
+
+# Optional: observer elevation (metres); skip twilight for speed
+solar = get_solar_data(pt, date, elevation=50.0, include_twilight=False)
 
 lunar = get_lunar_data(pt, date)
 print(lunar['Phase Name'])                      # e.g. 'Waxing Gibbous'
 print(f"{lunar['Illumination (%)']:.1f}%")
+print(f"Moon age: {lunar['Moon Age (Days)']} days")
+print(f"Waxing: {lunar['Is Waxing']}")
 
-tz_name, utc_offset = point_to_tz_offset(pt)
+tz_name, utc_offset = point_to_tz_offset(pt, date)
 print(tz_name, utc_offset)                      # Europe/London  1.0
 ```
 
@@ -436,7 +465,7 @@ one-line description, organised by module. No internet connection required.
 
 ```bash
 pip install -e ".[dev]"
-pytest                  # 298 tests
+pytest                  # 327 tests
 ```
 
 ---
